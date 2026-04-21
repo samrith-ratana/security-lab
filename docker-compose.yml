@@ -1,0 +1,155 @@
+
+networks:
+  red-net:
+    driver: bridge
+  dmz-net:
+    driver: bridge
+  internal-net:
+    driver: bridge
+  blue-net:
+    driver: bridge
+
+services:
+
+  # =========================
+  # 🔴 ATTACKER (RED TEAM)
+  # =========================
+  kali:
+    image: kalilinux/kali-rolling
+    container_name: kali
+    tty: true
+    stdin_open: true
+    networks:
+      - red-net
+      - dmz-net
+    command: /bin/bash
+
+  # =========================
+  # 🌐 REVERSE PROXY (ENTRY POINT)
+  # =========================
+  nginx:
+    image: nginx:latest
+    container_name: reverse-proxy
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+    networks:
+      - dmz-net
+
+  # =========================
+  # 🎯 WEB TARGETS (DMZ)
+  # =========================
+  dvwa:
+    image: vulnerables/web-dvwa
+    container_name: dvwa
+    depends_on:
+      - mysql
+    environment:
+      - DB_SERVER=mysql
+    networks:
+      - dmz-net
+      - internal-net
+
+  webgoat:
+    image: webgoat/webgoat-8.0
+    container_name: webgoat
+    networks:
+      - dmz-net
+
+  juiceshop:
+    image: bkimminich/juice-shop
+    container_name: juiceshop
+    networks:
+      - dmz-net
+
+  api-lab:
+    image: kennethreitz/httpbin
+    container_name: api-lab
+    networks:
+      - dmz-net
+
+  ipcam:
+    image: aler9/rtsp-simple-server
+    container_name: ip-camera
+    ports:
+      - "8554:8554"
+    networks:
+      - dmz-net
+
+  # =========================
+  # 🗄️ INTERNAL SERVICES
+  # =========================
+  mysql:
+    image: mysql:5.7
+    container_name: dvwa-db
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: dvwa
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - internal-net
+
+  metasploitable:
+    image: tleemcjr/metasploitable2
+    container_name: metasploitable
+    networks:
+      - internal-net
+      - dmz-net
+
+  # =========================
+  # 🔵 BLUE TEAM (DEFENSE)
+  # =========================
+  suricata:
+    image: jasonish/suricata
+    container_name: suricata
+    cap_add:
+      - NET_ADMIN
+    command: -i eth0
+    networks:
+      - dmz-net
+      - blue-net
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    networks:
+      - blue-net
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.0
+    container_name: kibana
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    networks:
+      - blue-net
+
+  # =========================
+  # 🧪 PACKET SNIFFER
+  # =========================
+  sniffer:
+    image: python:3.11
+    container_name: packet-sniffer
+    tty: true
+    volumes:
+      - ./sniffer:/sniffer
+    working_dir: /sniffer
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+            python sniffer.py"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    networks:
+      - dmz-net
+
+volumes:
+  mysql-data:
